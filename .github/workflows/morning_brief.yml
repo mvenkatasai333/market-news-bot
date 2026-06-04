@@ -1,27 +1,47 @@
-name: Run Daily Discord Market Bot
+name: Market News Bot
 
 on:
   schedule:
-    # Runs everyday at 7:00 AM EST (11:00 AM UTC)
-    - cron: '0 11 * * *'
-  workflow_dispatch: # Allows you to manually click "Run" to test it instantly
+    - cron: '0 11 * * *'   # 7:00 AM EST daily
+  workflow_dispatch:        # allows manual trigger
+
+permissions:
+  contents: read
 
 jobs:
-  run-bot:
+  send-briefing:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python Engine
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
-      - name: Install required scrapers
+      - name: Install dependencies
         run: pip install requests beautifulsoup4
 
-      - name: Execute market bot
+      # ✅ STEP 1 — Run the bot and capture output
+      - name: Run market bot
+        id: run_bot
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        run: python market_bot.py
+          LAST_MESSAGE_ID: ${{ vars.LAST_MESSAGE_ID }}
+        run: python market_bot.py | tee bot_output.txt
+
+      # ✅ STEP 2 — Save the new message ID for tomorrow's delete
+      - name: Save message ID for tomorrow
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MESSAGE_ID=$(grep "NEW_MESSAGE_ID=" bot_output.txt | cut -d= -f2)
+          if [ -n "$MESSAGE_ID" ]; then
+            gh variable set LAST_MESSAGE_ID --body "$MESSAGE_ID"
+            echo "Saved message ID: $MESSAGE_ID"
+          else
+            echo "No message ID found, skipping."
+          fi
