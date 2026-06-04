@@ -4,12 +4,10 @@ import time
 import random
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse, parse_qs
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
 LAST_MESSAGE_ID = os.getenv("LAST_MESSAGE_ID")
 
-# FIX 1: Replaced broken topic feed with a search-based one
 TRENDS_FEEDS = {
     "🔥 MAIN MARKET EVENTS": "https://news.google.com/rss/search?q=(stock+market+OR+S%26P500+OR+wall+street)+when:12h&hl=en-US&gl=US&ceid=US:en",
     "📊 MACRO ECONOMY & FED": "https://news.google.com/rss/search?q=(inflation+OR+interest+rates+OR+fed+rate)+when:12h&hl=en-US&gl=US&ceid=US:en",
@@ -22,50 +20,39 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15"
 ]
 
-def clean_html_tags(text):
-    if not text:
-        return ""
-    return BeautifulSoup(text, "html.parser").get_text()
-
-def clean_duplicate_headline(title):
-    """Fixes Google News duplicate title bug"""
+def clean_title(title):
+    """Remove source suffix and fix duplicates"""
     if not title:
-        return ""
-    # Strip source tag from end
+        return "Market Update"
+    # Remove ' - Source Name' from end
     if " - " in title:
         title = title.rsplit(" - ", 1)[0].strip()
-    # FIX 2: Handle duplicates separated by spaces too
-    stripped = title.strip()
-    mid = len(stripped) // 2
-    if len(stripped) % 2 == 0:
-        first = stripped[:mid].strip()
-        second = stripped[mid:].strip()
-        if first == second:
-            return first
-    return stripped
+    # Fix exact duplicate (e.g. "Headline Headline")
+    words = title.split()
+    half = len(words) // 2
+    if half > 0 and words[:half] == words[half:]:
+        title = " ".join(words[:half])
+    return title.strip()
 
-def extract_real_url(item):
+def extract_real_url_from_description(description_html):
     """
-    FIX 3: Google News RSS wraps real URLs in a redirect.
-    We extract the actual article URL from the <source url="..."> attribute
-    or fall back to fetching the redirect.
+    THE KEY FIX: Google News hides the real article URL inside
+    the <description> tag as an <a href="..."> pointing to the source.
+    We parse that HTML and grab the LAST link (which is the article).
     """
-    # Try source element's url attribute first
-    source_el = item.find("source")
-    if source_el is not None and source_el.get("url"):
-        return source_el.get("url")
-
-    # Try guid tag (sometimes has the real link)
-    guid_el = item.find("guid")
-    if guid_el is not None and guid_el.text and guid_el.text.startswith("http"):
-        return guid_el.text
-
-    # Fall back to the raw link (still clickable, just ugly)
-    link_el = item.find("link")
-    if link_el is not None:
-        return link_el.text
-
-    return "#"
+    if not description_html:
+        return None
+    try:
+        soup = BeautifulSoup(description_html, "html.parser")
+        links = soup.find_all("a", href=True)
+        for link in reversed(links):
+            href = link["href"]
+            # Skip Google News internal links
+            if "news.google.com" not in href and href.startswith("http"):
+                return href
+    except Exception:
+        pass
+    return None
 
 def fetch_feed_data(url, retries=2):
     headers = {
@@ -82,20 +69,16 @@ def fetch_feed_data(url, retries=2):
         except ET.ParseError as e:
             print(f"XML parse error: {e}")
         except Exception as e:
-            print(f"Error reading feed (attempt {attempt+1}): {e}")
+            print(f"Error on attempt {attempt+1}: {e}")
         time.sleep(2)
     return None
 
 def delete_old_message(message_id):
     if not message_id or not DISCORD_WEBHOOK_URL:
         return
-    delete_url = f"{DISCORD_WEBHOOK_URL}/messages/{message_id}"
     try:
-        resp = requests.delete(delete_url, timeout=10)
-        if resp.status_code == 204:
-            print(f"Deleted old message: {message_id}")
-        else:
-            print(f"Could not delete: {resp.status_code}")
+        resp = requests.delete(f"{DISCORD_WEBHOOK_URL}/messages/{message_id}", timeout=10)
+        print(f"Delete status: {resp.status_code}")
     except Exception as e:
         print(f"Delete failed: {e}")
 
@@ -108,48 +91,57 @@ def send_to_discord(content):
     message_id = None
 
     for i, chunk in enumerate(chunks):
-        payload = {
-            "content": chunk,
-            "username": "Alpha Terminal Bot",
-        }
         try:
             resp = requests.post(
                 DISCORD_WEBHOOK_URL + "?wait=true",
-                json=payload,
+                json={"content": chunk, "username": "Alpha Terminal Bot"},
                 timeout=10
             )
             if i == 0 and resp.status_code == 200:
                 message_id = resp.json().get("id")
-            print(f"Sent chunk {i+1}/{len(chunks)}")
+            print(f"Sent chunk {i+1}/{len(chunks)} — status {resp.status_code}")
         except Exception as e:
-            print(f"Failed to push chunk {i+1}: {e}")
+            print(f"Failed chunk {i+1}: {e}")
 
     return message_id
 
 def build_discord_briefing():
     message = "## 🌍 **MORNING MULTI-PORTAL INTELLIGENCE**\n"
-    message += "*Fresh overnight updates processed at 7:00 AM EST*\n"
+    message += "*Fresh overnight updates — 7:00 AM EST*\n"
     message += "━" * 25 + "\n\n"
 
     for section_name, url in TRENDS_FEEDS.items():
         root = fetch_feed_data(url)
         if root is None:
-            message += f"### {section_name}\n⚠️ *Feed unavailable — try again later.*\n\n"
+            message += f"### {section_name}\n⚠️ *Feed unavailable.*\n\n"
             continue
 
         items = root.findall(".//item")[:2]
-        if items:
-            message += f"### {section_name}\n"
-            for item in items:
-                raw_title = item.find("title").text if item.find("title") is not None else "Market Update"
-                source = item.find("source").text if item.find("source") is not None else "Financial Portal"
 
-                title = clean_duplicate_headline(raw_title)
-                real_url = extract_real_url(item)  # FIX 3 applied here
+        if not items:
+            message += f"### {section_name}\n⚠️ *No headlines found.*\n\n"
+            continue
 
-                message += f"🔹 **[{title}]({real_url})**\n↳ *Source: {source}*\n\n"
-        else:
-            message += f"### {section_name}\n⚠️ *No headlines found right now.*\n\n"
+        message += f"### {section_name}\n"
+
+        for item in items:
+            # Clean title
+            raw_title = item.findtext("title") or "Market Update"
+            title = clean_title(raw_title)
+
+            # Get source name
+            source_el = item.find("source")
+            source = source_el.text if source_el is not None else "Unknown"
+
+            # THE FIX: pull real URL from description HTML
+            description_html = item.findtext("description") or ""
+            real_url = extract_real_url_from_description(description_html)
+
+            # Fallback to google link if extraction fails
+            if not real_url:
+                real_url = item.findtext("link") or "#"
+
+            message += f"🔹 **[{title}]({real_url})**\n↳ *{source}*\n\n"
 
         time.sleep(1.5)
 
