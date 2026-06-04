@@ -1,0 +1,27 @@
+name: Run Daily Discord Market Bot
+
+on:
+  schedule:
+    # Runs everyday at 7:00 AM EST (11:00 AM UTC)
+    - cron: '0 11 * * *'
+  workflow_dispatch: # Allows you to manually click "Run" to test it instantly
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Python Engine
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install required scrapers
+        run: pip install requests beautifulsoup4
+
+      - name: Execute market bot
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: python market_bot.py
