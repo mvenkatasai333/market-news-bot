@@ -8,10 +8,10 @@ from bs4 import BeautifulSoup
 # Reads your secure Webhook from GitHub Secrets
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
 
-# Your 4 exact target feeds optimized with 'when:12h' for freshness
+# FIX: Updated the main business feed link and optimized search strings
 TRENDS_FEEDS = {
-    "🔥 MAIN MARKET EVENTS": "https://news.google.com/rss/sections/CAAqBggKMHJjR1NoTldvRERRb0pChG9JRE93YlhCd01UUXoF?hl=en-US&gl=US&ceid=US:en",
-    "📊 MACRO ECONOMY & FED": "https://news.google.com/rss/search?q=(inflation+OR+interest+rates+OR+powell+OR+economy)+when:12h&hl=en-US&gl=US&ceid=US:en",
+    "🔥 MAIN MARKET EVENTS": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
+    "📊 MACRO ECONOMY & FED": "https://news.google.com/rss/search?q=(inflation+OR+interest+rates+OR+fed+rate)+when:12h&hl=en-US&gl=US&ceid=US:en",
     "💻 TECH, SEMIS & AI": "https://news.google.com/rss/search?q=(nasdaq+OR+nvidia+OR+ai+stocks)+when:12h&hl=en-US&gl=US&ceid=US:en",
     "🪙 CRYPTO & ASSETS": "https://news.google.com/rss/search?q=(bitcoin+OR+crypto+regulation)+when:12h&hl=en-US&gl=US&ceid=US:en"
 }
@@ -25,6 +25,24 @@ def clean_html_tags(text):
     if not text:
         return ""
     return BeautifulSoup(text, "html.parser").get_text()
+
+def clean_duplicate_headline(title):
+    """Fixes the Google News bug where phrases repeat back-to-back"""
+    if not title:
+        return ""
+    # Strip the publication tag from the end first (e.g., " - Yahoo Finance")
+    if " - " in title:
+        title = title.rsplit(" - ", 1)[0].strip()
+    
+    # Check if the title is a perfect duplication separated by a space
+    half_len = len(title) // 2
+    if len(title) % 2 == 0 or len(title) % 2 == 1:
+        first_half = title[:half_len].strip()
+        second_half = title[half_len:].strip()
+        if first_half == second_half:
+            return first_half
+            
+    return title
 
 def fetch_feed_data(url):
     headers = {
@@ -54,18 +72,17 @@ def build_discord_briefing():
         if items:
             message += f"### {section_name}\n"
             for item in items:
-                title = item.find("title").text
-                link = item.find("link").text
+                raw_title = item.find("title").text if item.find("title") is not None else "Market Update"
+                link = item.find("link").text if item.find("link") is not None else "#"
                 source = item.find("source").text if item.find("source") is not None else "Financial Portal"
-                description = clean_html_tags(item.find("description").text)
                 
-                if " - " in title:
-                    title = title.rsplit(" - ", 1)[0]
+                # Apply text cleaners
+                title = clean_duplicate_headline(raw_title)
                 
-                short_desc = description[:120] + "..." if len(description) > 120 else description
-                message += f"🔹 **[{title}]({link})**\n*{short_desc}*\n↳ *Source: {source}*\n\n"
+                # Output sleek format without huge bloated descriptions
+                message += f"🔹 **[{title}]({link})**\n↳ *Source: {source}*\n\n"
         
-        time.sleep(2.0)
+        time.sleep(1.5)
     return message
 
 def send_to_discord(content):
@@ -84,7 +101,7 @@ def send_to_discord(content):
 
     try:
         requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
-        print("Success! Sent morning briefing to Discord.")
+        print("Success! Sent clean morning briefing to Discord.")
     except Exception as e:
         print(f"Failed to push message to Discord: {e}")
 
