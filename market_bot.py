@@ -6,7 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 
 # Reads your secure Webhook from GitHub Secrets
-DISCORD_WEBHOOK_URL = os.getenv("https://discord.com/api/webhooks/1512186386927718734/y6qH-CRT-oNAuNzHiKHNIp-fG8BCXUYkY4QWfxNj9Gmt0XXN1l0svuwwPHma_-dSRP9S")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
 
 # Your 4 exact target feeds optimized with 'when:12h' for freshness
 TRENDS_FEEDS = {
