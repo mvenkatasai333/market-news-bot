@@ -1,47 +1,38 @@
-name: Market News Bot
+name: Run Daily Discord Market Bot
 
 on:
   schedule:
-    - cron: '0 11 * * *'   # 7:00 AM EST daily
-  workflow_dispatch:        # allows manual trigger
-
-permissions:
-  contents: read
+    - cron: '0 11 * * *'
+  workflow_dispatch:
 
 jobs:
-  send-briefing:
+  run-bot:
     runs-on: ubuntu-latest
+    
+    # FIX: Explicitly grants the automated engine clearance to update your tracker file
+    permissions:
+      contents: write
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python Engine
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install required scrapers
         run: pip install requests beautifulsoup4
 
-      # ✅ STEP 1 — Run the bot and capture output
-      - name: Run market bot
-        id: run_bot
+      - name: Execute market bot (Clean & Post)
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          LAST_MESSAGE_ID: ${{ vars.LAST_MESSAGE_ID }}
-        run: python market_bot.py | tee bot_output.txt
+        run: python market_bot.py
 
-      # ✅ STEP 2 — Save the new message ID for tomorrow's delete
-      - name: Save message ID for tomorrow
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          MESSAGE_ID=$(grep "NEW_MESSAGE_ID=" bot_output.txt | cut -d= -f2)
-          if [ -n "$MESSAGE_ID" ]; then
-            gh variable set LAST_MESSAGE_ID --body "$MESSAGE_ID"
-            echo "Saved message ID: $MESSAGE_ID"
-          else
-            echo "No message ID found, skipping."
-          fi
+      # Auto-commits the tracking file back into your repository
+      - name: Save tracking ID to repository
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "System sync: updated last message ID tracker"
+          file_pattern: 'last_message_id.txt'
